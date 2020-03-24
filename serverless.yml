@@ -1,0 +1,237 @@
+service: monetization
+
+custom:
+  eventBus: arn:aws:events:${self:provider.region}:779089996899:event-bus/ncent-${opt:stage}
+  authorizer: ${ssm:/ncnt/${opt:stage}/authorizer}
+
+provider:
+  name: aws
+  stage: ${opt:stage}
+  runtime: go1.x
+  region: us-west-2
+  iamRoleStatements:
+    - Effect: Allow
+      Resource: "*"
+      Action:
+        - dynamodb:DeleteItem
+        - dynamodb:UpdateItem
+        - dynamodb:PutItem
+        - dynamodb:ListTables
+        - dynamodb:DescribeTable
+        - dynamodb:DescribeStream
+        - dynamodb:ListStreams
+        - dynamodb:GetShardIterator
+        - dynamodb:BatchGetItem
+        - dynamodb:GetItem
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:DescribeReservedCapacity
+        - dynamodb:DescribeReservedCapacityOfferings
+        - dynamodb:GetRecords
+        - ec2:DescribeVpcs
+        - ec2:DescribeSubnets
+        - ec2:DescribeNetworkInterfaces
+        - ec2:DescribeAddresses
+        - ec2:AssociateAddress
+        - ec2:DisassociateAddress
+        - ec2:CreateNetworkInterface
+        - ec2:DeleteNetworkInterface
+        - ec2:ModifyNetworkInterfaceAttribute
+        - s3:Get*
+        - s3:List*
+        - logs:*
+        - ses:*
+        - events:*
+
+package:
+  exclude:
+  stage: ${opt:stage}
+    - ./**
+  include:
+    - ./bin/**
+
+functions:
+  plans:
+    handler: bin/eventbridge/plans
+    environment:
+      STAGE: ${opt:stage}
+    events:
+      - eventBridge:
+          eventBus: ${self:custom.eventBus}
+          pattern:
+            source:
+              - ${opt:stage}.admin.plans
+            detail-type:
+              - plan-created
+              - plan-updated
+
+  subscriptions:
+    handler: bin/eventbridge/subscriptions
+    environment:
+      STAGE: ${opt:stage}
+    events:
+      - eventBridge:
+          eventBus: ${self:custom.eventBus}
+          pattern:
+            source:
+              - "${opt:stage}.monetization"
+            detail-type:
+              - subscription-created
+              - subscription-cancelled
+
+  validate:
+    handler: bin/eventbridge/validate/challenge
+    environment:
+      STAGE: ${opt:stage}
+      DB_HOST: ${opt:db_host}
+      DB_PASSWD: ${opt:db_passwd}
+    events:
+      - eventBridge:
+          eventBus: ${self:custom.eventBus}
+          pattern:
+            source:
+              - ${opt:stage}.user.challenge
+            detail-type:
+              - challenge-created
+              - challenge-shared
+
+  new_subscription_email:
+    handler: bin/eventbridge/new_subscription_email
+    environment:
+      STAGE: ${opt:stage}
+    events:
+      - eventBridge:
+          eventBus: ${self:custom.eventBus}
+          pattern:
+            source:
+              - "${opt:stage}.monetization"
+            detail-type:
+              - subscription-created
+
+  create_auth0_user:
+    handler: bin/eventbridge/create_auth0_user
+    environment:
+      STAGE: ${opt:stage}
+      AUTH0_CLIENT_ID: ${opt:auth0_client_id}
+      AUTH0_SECRET: ${opt:auth0_secret}
+    events:
+      - eventBridge:
+          eventBus: ${self:custom.eventBus}
+          pattern:
+            source:
+              - "${opt:stage}.monetization"
+            detail-type:
+              - subscription-created
+
+  e2e_webhook:
+    handler: bin/apigateway/e2e_webhook
+    events:
+      - http:
+          path: /e2e_webhook
+          method: post
+          cors: true
+
+  get_subscriptions:
+    handler: bin/apigateway/subscriptions
+    environment:
+      STAGE: ${opt:stage}
+    events:
+      - http:
+          path: /subscriptions
+          method: get
+          authorizer: ${self:custom.authorizer}
+          cors: true
+
+resources:
+  Resources:
+    DynamoDBTablePlans:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-plans-${opt:stage}
+        AttributeDefinitions:
+          - AttributeName: uuid
+            AttributeType: S
+        KeySchema:
+          - AttributeName: uuid
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+    DynamoDBTableCriteria:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-criteria-${opt:stage}
+        AttributeDefinitions:
+          - AttributeName: uuid
+            AttributeType: S
+        KeySchema:
+          - AttributeName: uuid
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+    DynamoDBTableSubscriptions:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-subscriptions-${opt:stage}
+        AttributeDefinitions:
+          - AttributeName: uuid
+            AttributeType: S
+        KeySchema:
+          - AttributeName: uuid
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+    DynamoDBTableQuotas:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-quotas-${opt:stage}
+        AttributeDefinitions:
+          - AttributeName: uuid
+            AttributeType: S
+        KeySchema:
+          - AttributeName: uuid
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+    DynamoDBTablePaymentServices:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-payment-services-${opt:stage}
+        AttributeDefinitions:
+          - AttributeName: uuid
+            AttributeType: S
+        KeySchema:
+          - AttributeName: uuid
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+    DynamoDBTablePaymentMethods:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-payment-methods-${opt:stage}
+        AttributeDefinitions:
+          - AttributeName: uuid
+            AttributeType: S
+        KeySchema:
+          - AttributeName: uuid
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+    DynamoDBTableTransactions:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-transactions-${opt:stage}
+        AttributeDefinitions:
+          - AttributeName: uuid
+            AttributeType: S
+        KeySchema:
+          - AttributeName: uuid
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
